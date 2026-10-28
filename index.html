@@ -22,6 +22,14 @@
   body.locked{overflow:hidden}
   button{font:inherit;cursor:pointer}
   img{max-width:100%}
+  body.country-blocked{overflow:hidden}
+
+  /* ---------- COUNTRY BLOCK: full-screen restriction for every visitor ---------- */
+  .country-block{position:fixed;inset:0;z-index:1000;background:#000;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
+  .country-block-in{max-width:520px;width:100%}
+  .country-block h1{font-size:30px;line-height:1.25;margin:0;font-weight:700;letter-spacing:-.01em;color:#fff}
+  .country-block p{color:var(--muted);font-size:15px;line-height:1.55;margin:16px 0 0}
+  @media(max-width:560px){.country-block h1{font-size:25px}}
 
   /* ---------- AGE GATE ---------- */
   .gate{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:20px}
@@ -337,7 +345,15 @@
 </style>
 <noscript><style>.splash{display:none}.fade-img{opacity:1}.mini-loader,.media-loader,.cover-loader{display:none!important}</style></noscript>
 </head>
-<body class="locked">
+<body class="locked country-blocked">
+
+<!-- COUNTRY BLOCK: full-screen restriction shown to every visitor, no close control -->
+<div class="country-block" id="countryBlock" role="alertdialog" aria-modal="true" aria-labelledby="countryBlockTitle">
+  <div class="country-block-in">
+    <h1 id="countryBlockTitle">Este sitio web no está disponible en tu país</h1>
+    <p>El acceso a este sitio no está disponible desde tu ubicación.</p>
+  </div>
+</div>
 
 <!-- SPLASH: entry loading screen, progress tied to the real image loads -->
 <div class="splash" id="splash" role="status" aria-label="Cargando la página">
