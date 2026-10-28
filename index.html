@@ -637,7 +637,7 @@
       <h2 id="publishTitle">Publicar foto</h2>
       <button class="modal-x" id="publishClose" type="button" aria-label="Cerrar">×</button>
     </div>
-    <p class="modal-sub">Elige una foto y aparecerá la primera en el feed, para todos los visitantes.</p>
+    <p class="modal-sub">Elige una foto y aparecerá la primera en el feed, para todos los visitantes. Se optimiza automáticamente al publicarla.</p>
     <p class="form-error" id="publishError" role="alert"></p>
     <label class="file-label" for="publishFile">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5a1.5 1.5 0 0 0-2 0L6 19"/></svg>
@@ -1169,10 +1169,12 @@
   });
 </script>
 
-<!-- Firebase (builds clásicos compat: exponen el global `firebase`) -->
+<!-- Firebase (builds clásicos compat: exponen el global `firebase`).
+     Sin Firebase Storage a propósito: su bucket no aceptaba las subidas
+     y la foto nunca llegaba. La publicación guarda la foto optimizada
+     directamente en Realtime Database, que sí conecta. -->
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
 <script>
   /* ---------- Cuenta + publicación con Firebase ----------
@@ -1181,8 +1183,10 @@
      solo aparece —y la publicación solo se ejecuta— cuando la sesión
      iniciada es exactamente la cuenta admin ADMIN_EMAIL. Cualquier otra
      cuenta (o visitante sin sesión) solo ve el feed. Las fotos nuevas se
-     suben a Firebase Storage y su registro va a Realtime Database, de
-     donde el feed las lee para todos los visitantes. */
+     optimizan en el propio navegador (máx. 1600 px, JPEG) y se guardan
+     directamente en Realtime Database, de donde el feed las lee para
+     todos los visitantes. Antes se subían a Firebase Storage y esa
+     subida fallaba siempre, por eso la foto no se publicaba. */
   (function(){
     var ADMIN_EMAIL = 'darelvega20@gmail.com';
     var firebaseConfig = {
@@ -1214,7 +1218,7 @@
     var tabRegister = document.getElementById('tabRegister');
     var mode = 'login';
     var currentUser = null;
-    var fbAuth = null, fbStorage = null, fbDb = null, fbReady = false;
+    var fbAuth = null, fbDb = null, fbReady = false;
 
     function isAdmin(user){
       return !!(user && user.email && user.email.toLowerCase() === ADMIN_EMAIL);
@@ -1236,10 +1240,7 @@
         'auth/too-many-requests': 'Demasiados intentos seguidos. Espera un momento y vuelve a intentarlo.',
         'auth/network-request-failed': 'Sin conexión con el servidor de cuentas. Revisa tu internet e inténtalo de nuevo.',
         'auth/operation-not-allowed': 'El acceso con correo y contraseña no está activado en el proyecto de Firebase.',
-        'storage/unauthorized': 'Firebase Storage rechazó la subida. Revisa las reglas de seguridad del proyecto.',
-        'storage/canceled': 'La subida se canceló.',
-        'storage/unknown': 'Falló la subida de la foto. Inténtalo de nuevo.',
-        'PERMISSION_DENIED': 'Firebase rechazó guardar la publicación. Revisa las reglas de seguridad del proyecto.'
+        'PERMISSION_DENIED': 'Firebase rechazó guardar la publicación. Revisa las reglas de seguridad de Realtime Database del proyecto: deben permitir escribir en «posts» a la cuenta administradora.'
       };
       if(map[code]) return map[code];
       if(err && err.message) return err.message;
@@ -1275,19 +1276,22 @@
       }
     }
 
-    /* ----- Inicialización de Firebase ----- */
+    /* ----- Inicialización de Firebase -----
+       Auth y Database se inicializan por separado: si un servicio falla,
+       el otro sigue funcionando y el error no tumba toda la cuenta. */
     try{
       if(window.firebase && window.firebase.apps){
         if(!window.firebase.apps.length) window.firebase.initializeApp(firebaseConfig);
-        fbAuth = window.firebase.auth();
-        fbStorage = window.firebase.storage();
-        fbDb = window.firebase.database();
-        fbReady = true;
-        fbAuth.onAuthStateChanged(function(user){
-          currentUser = user || null;
-          refreshSessionUI();
-        });
-        listenRemotePosts();
+        try{ fbAuth = window.firebase.auth(); }catch(e){ fbAuth = null; }
+        try{ fbDb = window.firebase.database(); }catch(e){ fbDb = null; }
+        fbReady = !!(fbAuth && fbDb);
+        if(fbAuth){
+          fbAuth.onAuthStateChanged(function(user){
+            currentUser = user || null;
+            refreshSessionUI();
+          });
+        }
+        if(fbDb) listenRemotePosts();
       }
     }catch(e){ fbReady = false; }
     refreshSessionUI();
@@ -1427,7 +1431,9 @@
         var val = snap.val() || {};
         var records = Object.keys(val).map(function(k){
           var r = val[k] || {};
-          return { key: k, url: r.url, createdAt: r.createdAt || 0, views: r.views };
+          // Registros actuales: la foto va en imageData (data URL).
+          // Registros antiguos con url externa siguen funcionando.
+          return { key: k, url: r.url || r.imageData, createdAt: r.createdAt || 0, views: r.views };
         }).filter(function(r){ return typeof r.url === 'string' && r.url; });
         renderRemotePosts(records);
       }, function(){ /* Sin permiso o sin red: el feed local sigue visible. */ });
@@ -1471,8 +1477,11 @@
     publishFile.addEventListener('change', function(){
       var f = publishFile.files && publishFile.files[0];
       if(!f) return;
-      if(!/^image\//.test(f.type)){ showError(publishError, 'Elige un archivo de imagen.'); return; }
-      if(f.size > 15 * 1024 * 1024){ showError(publishError, 'La foto supera los 15 MB. Elige una más ligera.'); return; }
+      // Algunas fotos (HEIC de iPhone, galerías de Android) llegan sin tipo
+      // MIME: se aceptan también por extensión para no rechazarlas en falso.
+      var looksImage = /^image\//.test(f.type) || f.type === '' || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name);
+      if(!looksImage){ showError(publishError, 'Elige un archivo de imagen.'); return; }
+      if(f.size > 25 * 1024 * 1024){ showError(publishError, 'La foto supera los 25 MB. Elige una más ligera.'); return; }
       showError(publishError, '');
       chosenFile = f;
       publishFileLabel.textContent = f.name;
@@ -1482,6 +1491,55 @@
       publishPreview.classList.add('show');
       publishSubmit.disabled = false;
     });
+    /* ----- Preparar la foto: optimizarla en el navegador -----
+       La causa del fallo: la foto se subía a Firebase Storage y esa
+       subida nunca terminaba bien, así que no se publicaba nada. Ahora
+       la foto se reduce aquí mismo (máx. 1600 px, JPEG) y se guarda
+       directamente en Realtime Database junto al resto de la
+       publicación, sin pasar por Storage. Si el navegador no puede
+       redimensionarla (p. ej. HEIC en Chrome), se lee tal cual y solo
+       se acepta si ya es lo bastante ligera. */
+    function prepareImageData(file){
+      return new Promise(function(resolve, reject){
+        function readAsIs(){
+          var reader = new FileReader();
+          reader.onload = function(){
+            var d = reader.result;
+            if(typeof d === 'string' && d.length <= 1800000) resolve(d);
+            else reject(new Error('No se pudo preparar esa foto. Prueba con una captura de pantalla o una imagen JPG/PNG.'));
+          };
+          reader.onerror = function(){ reject(new Error('No se pudo leer la foto elegida. Inténtalo de nuevo.')); };
+          reader.readAsDataURL(file);
+        }
+        var blobUrl = URL.createObjectURL(file);
+        var img = new Image();
+        img.onload = function(){
+          try{
+            var w = img.naturalWidth, h = img.naturalHeight;
+            if(!w || !h){ URL.revokeObjectURL(blobUrl); readAsIs(); return; }
+            var scale = Math.min(1, 1600 / Math.max(w, h));
+            var quality = 0.82, data = '';
+            for(var attempt = 0; attempt < 5; attempt++){
+              var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+              var canvas = document.createElement('canvas');
+              canvas.width = cw; canvas.height = ch;
+              var ctx = canvas.getContext('2d');
+              ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cw, ch);
+              ctx.drawImage(img, 0, 0, cw, ch);
+              data = canvas.toDataURL('image/jpeg', quality);
+              if(data.length <= 1400000) break;
+              if(quality > 0.55){ quality -= 0.15; } else { scale *= 0.75; quality = 0.72; }
+            }
+            URL.revokeObjectURL(blobUrl);
+            if(data.length > 1800000){ reject(new Error('La foto es demasiado grande incluso optimizada. Elige una más ligera.')); return; }
+            resolve(data);
+          }catch(e){ URL.revokeObjectURL(blobUrl); readAsIs(); }
+        };
+        img.onerror = function(){ URL.revokeObjectURL(blobUrl); readAsIs(); };
+        img.src = blobUrl;
+      });
+    }
+
     publishSubmit.addEventListener('click', function(){
       // Segunda comprobación en el momento de publicar: sin sesión admin
       // exacta no se sube nada, aunque el botón se hubiera quedado visible.
@@ -1492,43 +1550,34 @@
         return;
       }
       if(!chosenFile){ showError(publishError, 'Primero elige una foto.'); return; }
-      if(!fbReady || !fbStorage || !fbDb){
+      if(!fbReady || !fbDb){
         showError(publishError, 'El servicio de publicación no cargó. Revisa tu conexión y recarga la página.');
         return;
       }
       showError(publishError, '');
       publishSubmit.disabled = true;
       publishProgress.classList.add('show');
-      publishBar.style.width = '0%';
-      publishProgressText.textContent = 'Subiendo foto… 0%';
-      var safeName = chosenFile.name.replace(/[^\w.\-]+/g, '_');
-      var ref = fbStorage.ref().child('posts/' + Date.now() + '_' + safeName);
-      var task = ref.put(chosenFile);
-      task.on('state_changed', function(snap){
-        var pct = snap.totalBytes ? Math.round(snap.bytesTransferred / snap.totalBytes * 100) : 0;
-        publishBar.style.width = pct + '%';
-        publishProgressText.textContent = 'Subiendo foto… ' + pct + '%';
-      }, function(err){
-        publishSubmit.disabled = false;
-        showError(publishError, friendlyError(err));
-      }, function(){
-        publishProgressText.textContent = 'Guardando la publicación…';
-        task.snapshot.ref.getDownloadURL().then(function(url){
-          return fbDb.ref('posts').push({
-            url: url,
-            createdAt: window.firebase.database.ServerValue.TIMESTAMP,
-            views: 0,
-            by: currentUser.email
-          });
-        }).then(function(){
-          publishBar.style.width = '100%';
-          resetPublishForm();
-          closeModal(publishModal);
-          showToast('Foto publicada — ya está en el feed');
-        }).catch(function(err){
-          publishSubmit.disabled = false;
-          showError(publishError, friendlyError(err));
+      publishBar.style.width = '12%';
+      publishProgressText.textContent = 'Preparando la foto…';
+      prepareImageData(chosenFile).then(function(imageData){
+        publishBar.style.width = '55%';
+        publishProgressText.textContent = 'Publicando en el feed…';
+        return fbDb.ref('posts').push({
+          imageData: imageData,
+          createdAt: window.firebase.database.ServerValue.TIMESTAMP,
+          views: 0,
+          by: currentUser.email
         });
+      }).then(function(){
+        publishBar.style.width = '100%';
+        publishProgressText.textContent = '¡Foto publicada!';
+        resetPublishForm();
+        closeModal(publishModal);
+        showToast('Foto publicada — ya está en el feed');
+      }).catch(function(err){
+        publishSubmit.disabled = false;
+        publishProgress.classList.remove('show');
+        showError(publishError, friendlyError(err));
       });
     });
 
