@@ -20,14 +20,6 @@
   html{scroll-behavior:smooth}
   body{margin:0;background:var(--bg);color:var(--text);font-family:"Helvetica Neue",Helvetica,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;-webkit-font-smoothing:antialiased}
   body.locked{overflow:hidden}
-  /* Restricción global: bloquea la página en todos los países, sin detección */
-  body:has(.country-block){overflow:hidden}
-  .country-block{position:fixed;inset:0;z-index:10000;background:#000;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
-  .country-block-in{max-width:520px;width:100%}
-  .country-block-icon{width:72px;height:72px;border-radius:50%;border:2px solid var(--accent);color:var(--accent);display:grid;place-items:center;margin:0 auto 24px}
-  .country-block h1{font-size:30px;line-height:1.2;margin:0 0 14px;letter-spacing:-.02em;font-weight:800}
-  .country-block p{color:var(--muted);font-size:16px;line-height:1.6;margin:0}
-  @media(max-width:560px){.country-block h1{font-size:25px}}
   button{font:inherit;cursor:pointer}
   img{max-width:100%}
 
@@ -346,17 +338,6 @@
 <noscript><style>.splash{display:none}.fade-img{opacity:1}.mini-loader,.media-loader,.cover-loader{display:none!important}</style></noscript>
 </head>
 <body class="locked">
-
-<!-- RESTRICCIÓN EN TODOS LOS PAÍSES: pantalla completa que bloquea la página para todos los visitantes, sin detección por ubicación -->
-<div class="country-block" id="countryBlock" role="alertdialog" aria-modal="true" aria-labelledby="countryBlockTitle">
-  <div class="country-block-in">
-    <div class="country-block-icon" aria-hidden="true">
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="m4.9 4.9 14.2 14.2"/></svg>
-    </div>
-    <h1 id="countryBlockTitle">Este sitio web no está disponible en tu país</h1>
-    <p>El acceso a este sitio está restringido en tu país.</p>
-  </div>
-</div>
 
 <!-- SPLASH: entry loading screen, progress tied to the real image loads -->
 <div class="splash" id="splash" role="status" aria-label="Cargando la página">
